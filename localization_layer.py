@@ -88,10 +88,10 @@ function layer:__init(opt)
 
   self.use_gt = 0
 
-  -- Computes region proposals from conv features
+  # -- Computes region proposals from conv features
   self.nets.rpn = build_rpn(opt)
 
-  -- Performs positive / negative sampling of region proposals
+  # -- Performs positive / negative sampling of region proposals
   self.nets.box_sampler_helper = nn.BoxSamplerHelper{
                                     batch_size=opt.sampler_batch_size,
                                     low_thresh=opt.sampler_low_thresh,
@@ -100,27 +100,27 @@ function layer:__init(opt)
                                     biased_sampling=opt.biased_sampling,
                                  }
 
-  -- Interpolates conv features for each RoI
+  # -- Interpolates conv features for each RoI
   self.nets.roi_pooling = nn.BilinearRoiPooling(opt.output_height, opt.output_width)
 
-  -- Used to compute box regression targets from GT boxes
+  # -- Used to compute box regression targets from GT boxes
   self.nets.invert_box_transform = nn.InvertBoxTransform()
 
-  -- Construct criterions
+  # -- Construct criterions
   self.nets.obj_crit_pos = nn.OurCrossEntropyCriterion() -- for objectness
   self.nets.obj_crit_neg = nn.OurCrossEntropyCriterion() -- for objectness
   self.nets.box_reg_crit = nn.SmoothL1Criterion() -- for RPN box regression
 
-  -- Intermediates computed during forward pass
+  # -- Intermediates computed during forward pass
 
-  -- Output of RPN
+  # -- Output of RPN
   self.rpn_out = nil
   self.rpn_boxes = nil
   self.rpn_anchors = nil
   self.rpn_trans = nil
   self.rpn_scores = nil
 
-  -- Outputs of sampler
+  # -- Outputs of sampler
   self.pos_data = nil
   self.pos_boxes = nil
   self.pos_anchors = nil
@@ -132,20 +132,20 @@ function layer:__init(opt)
   self.neg_scores = nil
   self.roi_boxes = torch.Tensor()
 
-  -- Used as targets for pos / neg objectness crits
+  # -- Used as targets for pos / neg objectness crits
   self.pos_labels = torch.Tensor()
   self.neg_labels = torch.Tensor()
 
-  -- Used as targets for bounding box regression
+  # -- Used as targets for bounding box regression
   self.pos_trans_targets = torch.Tensor()
 
-  -- Used to track image size; must call setImageSize before each forward pass
+  # -- Used to track image size; must call setImageSize before each forward pass
   self.image_width = nil
   self.image_height = nil
   self._called_forward_size = false
   self._called_backward_size = false
 
-  -- Other instance variables
+  # -- Other instance variables
   self.timer = torch.Timer()
   self.timing = false     -- Set to true to enable timing
   self.dump_vars = false  -- Set to true to dump vars
@@ -156,13 +156,13 @@ function layer:__init(opt)
 end
 
 function layer:parameters()
-  -- The only part of the DetectionModule that has parameters is the RPN,
-  -- so just forward the call
+  # -- The only part of the DetectionModule that has parameters is the RPN,
+  # -- so just forward the call
   return self.nets.rpn:parameters()
 end
 
 
--- This needs to be called before each forward pass
+# -- This needs to be called before each forward pass
 function layer:setImageSize(image_height, image_width)
   self.image_height = image_height
   self.image_width = image_width
@@ -170,13 +170,13 @@ function layer:setImageSize(image_height, image_width)
   self._called_backward_size = false
 end
 
---[[
-This needs to be called before every training-time forward pass.
-Inputs:
-- gt_boxes: 1 x B1 x 4 array of ground-truth region boxes
-- gt_labels: B1 dimensional array of ground-truth labels for regions
-- gt_embeddings: 1 x B1 x E array of ground-truth embeddings for regions
---]]
+# --[[
+# This needs to be called before every training-time forward pass.
+# Inputs:
+# - gt_boxes: 1 x B1 x 4 array of ground-truth region boxes
+# - gt_labels: B1 dimensional array of ground-truth labels for regions
+# - gt_embeddings: 1 x B1 x E array of ground-truth embeddings for regions
+# --]]
 function layer:setGroundTruth(gt_boxes, gt_embeddings, gt_labels)
   self.gt_boxes = gt_boxes
   self.gt_labels = gt_labels
@@ -246,8 +246,8 @@ function layer:updateOutput(input)
   end
 end
 
--- Sets external region proposals to use for for training/testing
--- input is a N x 4 list of N region proposals
+# -- Sets external region proposals to use for for training/testing
+# -- input is a N x 4 list of N region proposals
 function layer:set_region_proposals(input)
   self.region_proposals = input
 end
@@ -260,7 +260,7 @@ function layer:_forward_test(input)
     max_proposals = self.test_max_proposals
   }
 
-  -- Make sure that setImageSize has been called
+  # -- Make sure that setImageSize has been called
   assert(self.image_height and self.image_width and not self._called_forward_size,
          'Must call setImageSize before each forward pass')
   self._called_forward_size = true
@@ -328,10 +328,10 @@ function layer:_forward_test(input)
     end
   end)
 
-  -- Use NMS indices to pull out corresponding data from RPN
-  -- All these are being converted from (1, B2, D) to (B3, D)
-  -- where B2 are the number of boxes after boundary clipping and B3
-  -- is the number of boxes after NMS
+  # -- Use NMS indices to pull out corresponding data from RPN
+  # -- All these are being converted from (1, B2, D) to (B3, D)
+  # -- where B2 are the number of boxes after boundary clipping and B3
+  # -- is the number of boxes after NMS
   local rpn_boxes_nms = rpn_boxes:index(2, idx)[1]
   local rpn_anchors_nms = rpn_anchors:index(2, idx)[1]
   local rpn_trans_nms = rpn_trans:index(2, idx)[1]
@@ -342,7 +342,7 @@ function layer:_forward_test(input)
     print(string.format('After NMS there are %d boxes', rpn_boxes_nms:size(1)))
   end
 
-  -- Use roi pooling to get features for boxes
+  # -- Use roi pooling to get features for boxes
   local roi_features
   self:timeit('roi_pooling:forward_test', function()
     self.nets.roi_pooling:setImageSize(self.image_height, self.image_width)
@@ -463,8 +463,8 @@ function layer:_forward_train(input)
                                 self.pos_anchors, self.pos_target_boxes}
   end)
 
-  -- DIRTY DIRTY HACK: To prevent the loss from blowing up, replace boxes
-  -- with huge pos_trans_targets with ground-truth
+  # -- DIRTY DIRTY HACK: To prevent the loss from blowing up, replace boxes
+  # -- with huge pos_trans_targets with ground-truth
   local max_trans = torch.abs(self.pos_trans_targets):max(2)
   local max_trans_mask = torch.gt(max_trans, 10):expandAs(self.pos_trans_targets)
   local mask_sum = max_trans_mask:sum() / 4
@@ -475,7 +475,7 @@ function layer:_forward_train(input)
     self.pos_trans_targets[max_trans_mask] = 0
   end
 
-  -- Compute RPN box regression loss
+  # -- Compute RPN box regression loss
   self:timeit('box_reg_loss:forward', function()
     local crit = self.nets.box_reg_crit
     local weight = self.opt.mid_box_reg_weight
@@ -483,12 +483,12 @@ function layer:_forward_train(input)
     self.stats.losses.box_reg_loss = loss
   end)
   
-  -- Fish out the box regression loss
+  # -- Fish out the box regression loss
   local reg_mods = self.nets.rpn:findModules('nn.RegularizeLayer')
   assert(#reg_mods == 1)
   self.stats.losses.box_decay_loss = reg_mods[1].loss
   
-  -- Compute total loss
+  # -- Compute total loss
   local total_loss = 0
   for k, v in pairs(self.stats.losses) do
    total_loss = total_loss + v
@@ -597,21 +597,19 @@ end
 class RPN(nn.Module):
     def __init__(self, opt):
     #   -- Set up anchor sizes
-        anchors = opt.anchors
-        if not anchors then
-            anchors = torch.Tensor({
-                    {30, 20}, {90, 20}, {150, 20}, {210, 20}, {300, 20},
-                    {30, 40}, {90, 40}, {150, 40}, {210, 40}, {300, 20},
-                    {30, 60}, {90, 60}, {150, 60}, {210, 60}, {300, 20},
-                    }):t():clone()
-
-        anchors:mul(opt.anchor_scale)
-        end
-        local num_anchors = anchors:size(2)
+        if opt.anchors:
+            self.anchors = opt.anchors
+        else:
+            self.anchors = torch.Tensor([[30, 20], [90, 20], [150, 20], [210, 20], [300, 20],
+                                         [30, 40], [90, 40], [150, 40], [210, 40], [300, 40],
+                                         [30, 60], [90, 60], [150, 60], [210, 60], [300, 60]]).t()
+        self.anchors = self.anchors * opt.anchor_scale
+        
+        num_anchors = anchors.shape[1]
 
         # -- Add an extra conv layer and a ReLU
-        rpn = nn.Sequential(nn.Conv2d(opt.input_dim, opt.rpn_num_filters, opt.rpn_filter_size, 1, opt.rpn_filter_size // 2),
-                            nn.ReLU())
+        self.rpn = nn.Sequential(nn.Conv2d(opt.input_dim, opt.rpn_num_filters, opt.rpn_filter_size, 1, opt.rpn_filter_size // 2),
+                                 nn.ReLU())
 
         # -- Branch to produce box coordinates for each anchor
         # -- This branch will return {boxes, {anchors, transforms}}
@@ -621,7 +619,7 @@ class RPN(nn.Module):
         
         x0, y0, sx, sy = opt.field_centers
         self.seq = nn.Sequential(nn.MakeAnchors(x0, y0, sx, sy, anchors),
-                                nn.ReshapeBoxFeatures(num_anchors))
+                                 nn.ReshapeBoxFeatures(num_anchors))
         
         self.n2 = nn.ReshapeBoxFeatures(num_anchors)
         self.n3 = nn.ApplyBoxTransform()
@@ -629,7 +627,7 @@ class RPN(nn.Module):
 
         # -- Branch to produce box / not box scores for each anchor
         rpn_branch = nn.Sequential(nn.Conv2d(opt.rpn_num_filters, 2*num_anchors, 1, 1),
-                                nn.ReshapeBoxFeatures(num_anchors))
+                                   nn.ReshapeBoxFeatures(num_anchors))
 
         # -- Concat and flatten the branches
         local concat = nn.ConcatTable()
@@ -643,6 +641,7 @@ class RPN(nn.Module):
     end
 
     def forward(self, x):
+        x = self.rpn(x)
         y = self.box_branch(x)
         a = self.seq(y)
         b = self.n2(y)
@@ -653,5 +652,45 @@ class RPN(nn.Module):
         {{{a_, {b_}}, {a, {b}}}, z}
         {{{a_, {b_}}, {b_, b}}, z}
 
-
+class MakeAnchors(nn.Module):
+    def __init__(self, x0, y0, sx, sy, anchors):
+        self.x0 = x0
+        self.y0 = y0
+        self.sx = sx
+        self.sy = sy
+        self.anchors = anchors
+    
+    def forward(self, x):
+        with torch.no_grad():
+            n, _, h, w = x.shape
+        k = self.anchors.shape[1]
         
+        x_c = torch.arange(w, dtype = x.dtype, device = x.device)
+        x_c = x_c * self.sx + self.x0
+        y_c = torch.arange(h, dtype = x.dtype, device = x.device)
+        y_c = y_c * self.sy + self.y0
+
+        x_c = x_c.view(1, 1, 1, w).expand(n, k, h, w)
+        y_c = x_c.view(1, 1, 1, w).expand(n, k, h, w)
+        w = self.anchors[0].view(1, k, 1, 1).expand(n, k, h, w)
+        h = self.anchors[1].view(1, k, 1, 1).expand(n, k, h, w)
+        anchors = torch.cat([x_c, y_c, w, h], dim = 1)
+        
+        return anchors
+        
+class ReshapeBoxFeatures(nn.Module):
+    def __init__(self, k):
+        super(ReshapeBoxFeatures, self).__init__()
+        self.k = k
+    
+    def forward(self, x):
+        """
+        Input a tensor of shape N x (D * k) x H x W
+        Reshape and permute to output a tensor of shape N x (k * H * W) x D 
+        """
+        n, _, h, w = x.shape
+        d = x.shape[1] // self.k
+        x = x.reshape((n, self.k, h, w, d))
+        x = x.permute((0, 1, 3, 4, 2))
+        x = x.reshape(n, self.k * h * w, d)
+        return x
