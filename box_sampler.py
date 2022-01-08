@@ -98,9 +98,6 @@ class BoxSampler(nn.Module):
         l = self.labels[pos_target_idx]
         self.histogram[l] = self.histogram[l] + 1
 
-# --[[
-#   
-# --]]
     def forward(self, input_boxes, target_boxes):
         """
         Based on the ious between the generated boxes and the target boxes, P positive 
@@ -229,12 +226,6 @@ class BoxSamplerHelper(nn.Module):
             self.box_sampler = opts.box_sampler
         else:
             self.box_sampler = BoxSampler(opts)
-        
-        self.num_pos, self.num_neg = None, None
-        self.pos_input_idx = None
-        self.pos_target_idx = None
-        self.neg_input_idx = None
-        self.y = None
 
     def setBounds(self, bounds):
         # -- Just forward to the underlying sampler
@@ -243,109 +234,78 @@ class BoxSamplerHelper(nn.Module):
     def set_labels(self, labels):
         self.box_sampler.set_labels(labels)
 
-    def forward(self, input_data, target_data):
+    def forward(self, input_data, target_data, gt_labels):
         """
         Parameters
         ----------
-        input_data : list
-                     The first element of the first list is input_boxes, a Tensor of shape (N, B1, 4)
-        giving coordinates of the input boxes in (xc, yc, w, h) format.
-        All other elements of the first list are tensors of shape (N, B1, Di) parallel to
-        input_boxes; Di can be different for each element.
-        target_data : list
-                      The first element of the second list is target_boxes, a Tensor of shape (N, B2, 4)
-        giving coordinates of the target boxes in (xc, yc, w, h) format.
-        All other elements of the second list are tensors of shape (N, B2, Dj) parallel
-        to target_boxes; Dj can be different for each Tensor.
+        input_data    : list
+                        The first element of the first list is input_boxes, a Tensor of 
+                        shape (N, B1, 4) giving coordinates of the input boxes in 
+                        (xc, yc, w, h) format. All other elements of the first list are 
+                        tensors of shape (N, B1, Di) parallel to input_boxes; Di can be 
+                        different for each element.
+        target_data   : list
+                        The first element of the second list is target_boxes, a Tensor of 
+                        shape (N, B2, 4) giving coordinates of the target boxes in 
+                        (xc, yc, w, h) format. All other elements of the second list are 
+                        tensors of shape (N, B2, Dj) parallel to target_boxes; Dj can be 
+                        different for each Tensor.
 
         Returns
         -------
-        Returns a list of three lists:
-        The first list contains data about positive input boxes. The first element is of
-        shape (P, 4) and contains coordinates of positive boxes; the other elements
-        correspond to the additional input data about the input boxes; in particular the
-        ith element has shape (P, Di).
-        The second list contains data about target boxes corresponding to positive
-        input boxes. The first element is of shape (P, 4) and contains coordinates of
-        target boxes corresponding to sampled positive input boxes; the other elements
-        correspond to the additional input data about the target boxes; in particular the
-        jth element has shape (P, Dj).
-        The third list contains data about negative input boxes. The first element is of
-        shape (M, 4) and contains coordinates of negative input boxes; the other elements
-        correspond to the additional input data about the input boxes; in particular the
-        ith element has shape (M, Di).
-      """
-      input_boxes = input_data[0]
-      target_boxes = target_data[0]
-      N = input_boxes.shape[0]
-      assert N == 1, 'Only minibatches of 1 are supported'
+        positive_list : list
+                        The first list contains data about positive input boxes. 
+                        The first element is of shape (P, 4) and contains coordinates of 
+                        positive boxes; the other elements correspond to the additional 
+                        input data about the input boxes; in particular the ith element 
+                        has shape (P, Di).
+        target_list   : list
+                        The second list contains data about target boxes corresponding to 
+                        positive input boxes. The first element is of shape (P, 4) and 
+                        contains coordinates of target boxes corresponding to sampled 
+                        positive input boxes; the other elements correspond to the 
+                        additional input data about the target boxes; in particular the
+                        jth element has shape (P, Dj).
+        negative_list : list
+                        The third list contains data about negative input boxes. The first 
+                        element is of shape (M, 4) and contains coordinates of negative 
+                        input boxes; the other elements correspond to the additional input 
+                        data about the input boxes; in particular the ith element has 
+                        shape (M, Di).
+        y             : torch.tensor of shape (, )
+        """
+        self.set_labels(gt_labels)
+        input_boxes = input_data[0]
+        target_boxes = target_data[0]
+        N = input_boxes.shape[0]
+        assert N == 1, 'Only minibatches of 1 are supported'
 
-      # -- Run the sampler to get the indices of the positive and negative boxes
-      pos_input_idx, pos_target_idx, neg_input_idx = self.box_sampler(input_boxes, target_boxes)
+        # -- Run the sampler to get the indices of the positive and negative boxes
+        pos_input_idx, pos_target_idx, neg_input_idx = self.box_sampler(input_boxes, target_boxes)
+        # -- Inject mismatching pairs for the cosine embedding loss here, and save which pairs are mismatched
+        n = pos_target_idx.shape[0]
+        y = torch.ones(n, dtype = pos_target_idx.dtype, device = pos_target_idx.device)
+        frac = 5 #-- The fraction of how many positive pairs are kept 3 = 66% positive
+        z = torch.randperm(n, device = pos_target_idx.device) < (n / frac) #--:type(self.pos_target_idx:type())
+        y[z] = -1
+        p = z.clone().double() #--:type(self.pos_target_idx:type())
+        p[p == 0] = 1e-14 #-- Kind of sucky solution, but should happen very rarely.
+        
+        # -- Randomly select other word embeddings from the same page.
+        modified_pos_target_idx = pos_target_idx.clone()
+        modified_pos_target_idx[z] = torch.multinomial(p, z.sum(), True).to(pos_target_idx)
 
-      # -- Inject mismatching pairs for the cosine embedding loss here, and save which pairs are mismatched
-      n = pos_target_idx.shape[0]
-      self.y = torch.ones(n, dtype = pos_target_idx.dtype, device = pos_target_idx.device)
-      frac = 5 #-- The fraction of how many positive pairs are kept 3 = 66% positive
-      z = torch.randperm(n):lt(n / frac) #--:type(self.pos_target_idx:type())
-      self.y[z] = -1
-      p = z:clone():double() #--:type(self.pos_target_idx:type())
-      p[p:eq(0)] = 1e-14 #-- Kind of sucky solution, but should happen very rarely.
-      
-      # -- Randomly select other word embeddings from the same page.
-      # -- TODO: Should perhaps switch to any word embedding from the dataset, but requires those as input to model / constructor
-      # -- self.pos_target_idx[z] = torch.multinomial(p, z:sum(), true):type(self.pos_target_idx:type())
-      modified_pos_target_idx = pos_target_idx.clone()
-      modified_pos_target_idx[z] = torch.multinomial(p, z:sum(), True):type(pos_target_idx:type())
-
-      # -- Resize the output. We need to allocate additional tensors for the
-      # -- input data and target data, then resize them to the right size.
-      self.num_pos = pos_input_idx:size(1)
-      self.num_neg = neg_input_idx:size(1)
-      for i = 1, #input_data do
-        # -- The output tensors for additional data will be lazily instantiated
-        # -- on the first forward pass, which is probably after the module has been
-        # -- cast to the right datatype, so we make sure the new Tensors have the
-        # -- same type as the corresponding elements of the input.
-          dtype = input_data[i]:type()
-          if #self.output[1] < i:
-            table.insert(self.output[1], torch.Tensor():type(dtype))
-          end
-          if #self.output[3] < i then
-            table.insert(self.output[3], torch.Tensor():type(dtype))
-          end
-          local D = input_data[i]:size(3)
-          self.output[1][i]:resize(self.num_pos, D)
-          self.output[3][i]:resize(self.num_neg, D)
-        end
-        for i = 1, #target_data do
-          local dtype = target_data[i]:type()
-          if #self.output[2] < i then
-            table.insert(self.output[2], torch.Tensor():type(dtype))
-          end
-          local D = target_data[i]:size(3)
-          self.output[2][i]:resize(self.num_pos, D)
-        end
-
+        positive_list, negative_list = [], []
         # -- Now use the indicies to actually copy data from inputs to outputs
-        for i = 1, #input_data do
-          self.output[1][i]:index(input_data[i], 2, self.pos_input_idx)
-          self.output[3][i]:index(input_data[i], 2, self.neg_input_idx)
-          -- The call to index adds an extra dimension at the beginning for batch
-          -- size, but since its a singleton we just squeeze it out
-          local D = input_data[i]:size(3)
-          self.output[1][i] = self.output[1][i]:view(self.num_pos, D)
-          self.output[3][i] = self.output[3][i]:view(self.num_neg, D)
-        end
-        for i = 1, #target_data do
-          if i == 1 then
-            self.output[2][i]:index(target_data[i], 2, self.pos_target_idx)
-          elseif i == 2 then
-            self.output[2][i]:index(target_data[i], 2, modified_pos_target_idx)
-          end    
-          local D = target_data[i]:size(3)
-          self.output[2][i] = self.output[2][i]:view(self.num_pos, D)
-        end
-
-        return self.output
-    end
+        for i in range(len(input_data)):
+            positive_list.append(input_data[i][0, pos_input_idx])
+            negative_list.append(input_data[i][0, neg_input_idx])
+        
+        target_list = []
+        for i in range(len(target_data)):
+            if i == 0:
+                target_list.append(target_data[i][0, pos_target_idx])
+            elif i == 1:
+                target_list.append(target_data[i][0, modified_pos_target_idx])
+                
+        return positive_list, target_list, negative_list, y
