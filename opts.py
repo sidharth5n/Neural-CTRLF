@@ -15,6 +15,12 @@ def parse_args():
     # Model hyper parameters
     parser.add_argument('--rpn_hidden_dim', type = int, default = 128, 
                         help = 'Hidden size for the extra convolution in the RPN')
+    parser.add_argument('--rpn_filter_size', type = int, default = 3,
+                        help = '')
+    parser.add_argument('--rpn_num_filters', type = int, default = 256,
+                        help = '')
+    parser.add_argument('--anchor_scale', type = float, default = 1.0,
+                        help = '')
     parser.add_argument('--rnn_size', type = int, default = 512, 
                         help = 'Number of units to use at each layer of the RNN')
     parser.add_argument('-input_encoding_size', type = int, default = 512, 
@@ -31,13 +37,17 @@ def parse_args():
                         help = '')
     parser.add_argument('--fc_size', type = int, default = 4096,
                         help = '')
-    
+    parser.add_argument('--output_height', type = int, default = 8,
+                        help = 'Height of pooled RoI')
+    parser.add_argument('--output_width', type = int, default = 20,
+                        help = 'Width of pooled RoI')
+
     # Sampler hyper parameters
     parser.add_argument('--sampler_batch_size', type = int, default = 256, 
                         help = 'Batch size to use in the box sampler')
     parser.add_argument('--sampler_high_thresh', type = float, default = 0.75, 
                         help = 'Boxes with IoU greater than this with a GT box are considered positives')
-    parser.add_argument('--sampler_low_thresh', type = float, default = 0.4, 
+    parser.add_argument('--sampler_low_thresh', type = float, default = 0.2, 
                         help = 'Boxes with IoU less than this with all GT boxes are considered negatives')
     parser.add_argument('--biased_sampling', type = str2bool, default = True, 
                         help = 'Whether or not to try to bias sampling to use uncommon words as often as possible.')
@@ -103,12 +113,14 @@ def parse_args():
                         help = 'Name of the checkpoint file to use')
         
     # Test-time model options (for evaluation)
-    parser.add_argument('--test_rpn_nms_thresh', type = float, default = 0.7, 
+    parser.add_argument('--rpn_nms_thresh', type = float, default = 0.7, 
                         help = 'Test-time NMS threshold to use in the RPN')
-    parser.add_argument('--test_final_nms_thresh', type = float, default = -1, 
+    parser.add_argument('--final_nms_thresh', type = float, default = -1, 
                         help = 'Test-time NMS threshold to use for final outputs')
-    parser.add_argument('--test_num_proposals', type = int, default = 1000, 
+    parser.add_argument('--num_proposals', type = int, default = 1000, 
                         help = 'Number of region proposal to use at test-time')
+    parser.add_argument('--clip_final_boxes', type = str2bool, default = True, 
+                        help = 'Whether to clip final boxes to image boundary')
 
     # Visualization
     parser.add_argument('--print_every', type = int, default = 200, 
@@ -127,8 +139,6 @@ def parse_args():
                         help = 'which gpu to use. -1 = use CPU')
     # parser.add_argument('--timing', type = str2bool, default = false, 
     #                   help = 'whether to time parts of the net')
-    parser.add_argument('--clip_final_boxes', type = str2bool, default = True, 
-                        help = 'Whether to clip final boxes to image boundar')
     
 
     args = parser.parse_args()
