@@ -51,6 +51,9 @@ class LocalizationLayer(nn.Module):
         # Used to track image size; must call setImageSize before each forward pass
         self.image_width = None
         self.image_height = None
+        self.test_clip_boxes = opt.clip_final_boxes
+        self.test_nms_thresh = opt.rpn_nms_thresh
+        self.test_max_proposals = opt.num_proposals
 
     # -- This needs to be called before each forward pass
     def setImageSize(self, image_height, image_width):
@@ -71,13 +74,7 @@ class LocalizationLayer(nn.Module):
         self._called_forward_gt = False
         self._called_backward_gt = False
 
-    def setTestArgs(self, args):
-        args = args or {}
-        self.test_clip_boxes = utils.getopt(args, 'clip_boxes', True)
-        self.test_nms_thresh = utils.getopt(args, 'nms_thresh', 0.7)
-        self.test_max_proposals = utils.getopt(args, 'max_proposals', 300)
-
-    def forward(self, cnn_features):
+    def forward(self, cnn_features, img_height, img_width):
         """
         Parameters
         ----------
@@ -96,24 +93,19 @@ class LocalizationLayer(nn.Module):
         gt_labels_sample : pos x L array of ground-truth labels corresponding to sampled
                            positives. This will be an empty Tensor at test-time.
         """
+        self.setImageSize(self, img_height, img_width)
         if self.train:
-            return self._forward_train(cnn_features)
+            return self._train(cnn_features)
         else:
-            return self._forward_test(cnn_features)
+            return self._test(cnn_features)
 
-    def _forward_test(self, cnn_features):
-        args = {'clip_boxes' : self.test_clip_boxes,
-                'nms_thresh' : self.test_nms_thresh,
-                'max_proposals' : self.test_max_proposals}
-
-        # -- Make sure that setImageSize has been called
-        assert self.image_height and self.image_width and not self._called_forward_size, 'Must call setImageSize before each forward pass')
-
-        rpn_boxes, rpn_anchors, rpn_trans, rpn_scores = self.nets.rpn(cnn_features)
+    def _test(self, cnn_features):
+        
+        rpn_boxes, rpn_anchors, rpn_trans, rpn_scores = self.rpn(cnn_features)
         num_boxes = rpn_boxes.shape[1]
 
         # Maybe clip boxes to image boundary
-        if args['clip_boxes']:
+        if self.test_clip_boxes:
             bounds = {'xmin' : 1, 'ymin' : 1, 'xmax' : self.image_width, 'ymax' : self.image_height}
             rpn_boxes, valid = box_utils.clip_boxes(rpn_boxes, bounds, 'cxcywh')
 
@@ -133,33 +125,21 @@ class LocalizationLayer(nn.Module):
         # Convert rpn boxes from (xc, yc, w, h) format to (x1, y1, x2, y2)
         rpn_boxes_x1y1x2y2 = torchvision.ops.box_convert(rpn_boxes, 'cxcywh', 'xyxy')
 
-        # -- Convert objectness positive / negative scores to probabilities
+        # Convert objectness positive / negative scores to probabilities
         rpn_scores_exp = torch.exp(rpn_scores)
         pos_exp = rpn_scores_exp[0, :, 0]
         neg_exp = rpn_scores_exp[0, :, 1]
         scores = pos_exp / (pos_exp + neg_exp)
         
+        # Use NMS indices to pull out corresponding data from RPN
         verbose = False
         if verbose:
-            print('in LocalizationLayer forward_test')
-            print(f'Before NMS there are {num_boxes} boxes')
-            print(f'Using NMS threshold {args["nms_thresh"]}')
+            print(f'Before RPN NMS there are {num_boxes} boxes.')
+            print(f'Using NMS threshold {self.test_nms_thresh}.')
+        idx = torchvision.ops.nms(rpn_boxes_x1y1x2y2, scores, self.test_nms_thresh)
+        if self.test_max_proposals > 0:
+            idx = idx[:self.test_max_proposals]
 
-        
-        # boxes_scores = scores.new_empty((num_boxes, 5))
-        # boxes_scores[:, :4] = rpn_boxes_x1y1x2y2
-        # boxes_scores[:, 4] = scores
-        
-        # Run NMS and sort by objectness score
-        # if arg.max_proposals == -1:
-            # idx = box_utils.nms(boxes_scores, arg.nms_thresh)
-        # else:
-            # idx = box_utils.nms(boxes_scores, arg.nms_thresh, arg.max_proposals)  
-        idx = torchvision.ops.nms(rpn_boxes_x1y1x2y2, scores, args['nms_thresh'])
-        if args['max_proposals'] > 0:
-            idx = idx[:args['max_proposals']]
-
-        # Use NMS indices to pull out corresponding data from RPN
         # All these are being converted from (1, B2, D) to (B3, D)
         # where B2 are the number of boxes after boundary clipping and B3
         # is the number of boxes after NMS
@@ -177,11 +157,11 @@ class LocalizationLayer(nn.Module):
         # https://pytorch.org/vision/stable/ops.html
         ###############################################################
         # Use roi pooling to get features for boxes
-        roi_features = self.nets.roi_pooling(cnn_features[1], rpn_boxes_nms, self.image_height, self.image_width)
+        roi_features = self.roi_pooling(cnn_features[0], rpn_boxes_nms, self.image_height, self.image_width)
 
         return roi_features, rpn_boxes_nms, None, None
 
-    def _forward_train(self, cnn_features):
+    def _train(self, cnn_features):
         """
         Returns
         -------
@@ -192,18 +172,13 @@ class LocalizationLayer(nn.Module):
         gt_boxes, gt_embeddings = self.gt_boxes, self.gt_embeddings
         self._called_forward_gt = True
 
-        # -- Make sure that setImageSize has been called
-        assert(self.image_height and self.image_width and not self._called_forward_size,
-              'Must call setImageSize before each forward pass')
-        self._called_forward_size = True
-
         N = cnn_features.shape[0]
         assert N == 1, 'Only minibatches with N = 1 are supported'
         B1 = gt_boxes.shape[1]
         assert gt_boxes.ndim() == 3 and gt_boxes.shape[0] == N and gt_boxes.shape[2] == 4, 'gt_boxes must have shape (N, B1, 4)'
         assert gt_embeddings.ndim() == 3 and gt_embeddings.shape[0] == N and gt_embeddings.shape[1] == B1, 'gt_embeddings must have shape (N, B1, L)'
 
-        # -- Run the RPN forward
+        # Run the RPN forward
         rpn_boxes, rpn_anchors, rpn_trans, rpn_scores = self.rpn(cnn_features)
 
         if self.opt.train_remove_outbounds_boxes:
@@ -250,13 +225,13 @@ class RPN(nn.Module):
                                 [30, 40], [90, 40], [150, 40], [210, 40], [300, 40],
                                 [30, 60], [90, 60], [150, 60], [210, 60], [300, 60]]).t()
         anchors = anchors * opt.anchor_scale
-        self.num_anchors = anchors.shape[1]
+        num_anchors = anchors.shape[1]
 
         # Add an extra conv layer and a ReLU
         self.conv = nn.Sequential(nn.Conv2d(opt.input_dim, opt.rpn_num_filters, opt.rpn_filter_size, 1, opt.rpn_filter_size // 2),
                                   nn.ReLU())
         # Branch to produce box coordinates for each anchor
-        self.bbox_pred = nn.Conv2d(opt.rpn_num_filters, 4*self.num_anchors, 1, 1)
+        self.bbox_pred = nn.Conv2d(opt.rpn_num_filters, 4*num_anchors, 1, 1)
         ######################################################################
         # CHECK WHETHER THIS CAN BE REPLACED WITH AnchorGenerator FROM PYTORCH
         # https://github.com/pytorch/vision/blob/main/torchvision/models/detection/anchor_utils.py
@@ -264,7 +239,7 @@ class RPN(nn.Module):
         x0, y0, sx, sy = opt.field_centers
         self.anchor_generator = MakeAnchors(x0, y0, sx, sy, anchors)   
         # Branch to produce box / not box scores for each anchor
-        self.cls_logits = nn.Conv2d(opt.rpn_num_filters, 2*self.num_anchors, 1, 1)
+        self.cls_logits = nn.Conv2d(opt.rpn_num_filters, 2*num_anchors, 1, 1)
 
     def forward(self, feats):
         """
@@ -281,12 +256,12 @@ class RPN(nn.Module):
         """
         t = self.conv(feats) # (N,R,H,W)
         y = self.bbox_pred(t) # (N,4*K,H,W)
-        boxes = reshape_box_features(y, self.num_anchors) # (N,K*H*W,4)
+        boxes = permute_and_flatten(y, 4) # (N,K*H*W,4)
         anchors = self.anchor_generator(y) # (N,4*K,H,W)
-        anchors = reshape_box_features(anchors, self.num_anchors) # (N,K*H*W,4)
+        anchors = permute_and_flatten(anchors, 4) # (N,K*H*W,4)
         transforms = box_utils.apply_box_transform(anchors, boxes) # (N,K*H*W,4)
         scores = self.cls_logits(t) #(N,2*K,H,W)
-        scores = reshape_box_features(scores, self.num_anchors) #(N,K*H*W,2)
+        scores = permute_and_flatten(scores, 2) #(N,K*H*W,2)
         return boxes, anchors, transforms, scores
 
 ######################################################################
@@ -326,7 +301,7 @@ class MakeAnchors(nn.Module):
         
         return anchors
     
-def reshape_box_features(x, k):
+def permute_and_flatten(x, d):
     """
     Input a tensor of shape N x (D * k) x H x W
     Reshape and permute to output a tensor of shape N x (k * H * W) x D 
@@ -334,16 +309,15 @@ def reshape_box_features(x, k):
     Parameters
     ----------
     x : torch.tensor of shape (N, D*K, H, W)
-    k : int
-        No. of anchors
+    d : int
+        Feature dimension
 
     Returns
     -------
     x : torch.tensor of shape (N, K*H*W, D)
     """
     n, _, h, w = x.shape
-    d = x.shape[1] // k
-    x = x.reshape((n, k, h, w, d))
-    x = x.permute((0, 1, 3, 4, 2))
+    x = x.reshape((n, -1, d, h, w))
+    x = x.permute((0, 3, 4, 1, 2))
     x = x.reshape(n, -1, d)
     return x
