@@ -2,6 +2,16 @@ import torch
 import torchvision
 
 def apply_box_transform(boxes, trans):
+    """
+    Parameters
+    ----------
+    boxes : torch.tensor of shape (N, M, 4) or (N, 4)
+    trans : torch.tensor of shape (N, M, 4) or (N, 4)
+
+    Returns
+    -------
+    out : torch.tensor of shape (N, M, 4) or (N, 4)
+    """
 
     assert boxes.shape[-1] == 4, 'Last dim of boxes must be 4'
     assert trans.shape[-1] == 4, 'Last dim of trans must be 4'
@@ -17,7 +27,7 @@ def apply_box_transform(boxes, trans):
     w = torch.exp(tw) * wa
     h = torch.exp(th) * ha
 
-    out = torch.cat([x, y, w, h], dim = 1)
+    out = torch.cat([x, y, w, h], dim = -1)
     
     return out
 
@@ -98,7 +108,7 @@ def box_to_affine(box, H, W):
     w = box[:, 2]
     h = box[:, 3]
 
-    affine = torch.zeros((B, 2, 3), device = box.device)
+    affine = box.new_zeros((B, 2, 3))
     affine[:, 0, 0] = h / H
     affine[:, 0, 2] = (2*yc - H - 1) / (H - 1)
     affine[:, 1, 1] = w / W
