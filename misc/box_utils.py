@@ -15,9 +15,6 @@ def apply_box_transform(boxes, trans):
 
     assert boxes.shape[-1] == 4, 'Last dim of boxes must be 4'
     assert trans.shape[-1] == 4, 'Last dim of trans must be 4'
-    
-    boxes = boxes.contiguous().view(-1, 4)
-    trans = trans.contiguous().view(-1, 4)
 
     xa, ya, wa, ha = torch.split(boxes, 1, -1)
     tx, ty, tw, th = torch.split(trans, 1, -1)
@@ -37,18 +34,20 @@ def clip_boxes(boxes, bounds, format):
     
     Parameters
     ----------
-    boxes : torch.Tensor containing boxes, of shape (N, 4) or (N, M, 4)
-    - bounds: Table containing the following keys specifying the bounds:
-    - x_min, x_max: Minimum and maximum values for x (inclusive)
-    - y_min, y_max: Minimum and maximum values for y (inclusive)
-    - format: The format of the boxes; either 'xyxy' or 'cxcywh' or 'xywh'
+    boxes         : torch.Tensor of shape (N, 4) or (N, M, 4)
+                    Coordinates in the specified format
+    bounds        : dict
+                    Bounds of the image (inclusive)
+                    x_min, x_max, y_min, y_max
+    format        : str
+                    Format of the boxes. One of 'xyxy', 'cxcywh' or 'xywh'.
     
     Returns
     -------
-    - boxes_clipped: Tensor giving coordinates of clipped boxes; has
-    same shape and format as input.
-    - valid: 1D byte Tensor indicating which bounding boxes are valid,
-    in sense of completely out of bounds of the image.
+    boxes_clipped : torch.tensor of shape (N, 4) or (N, M, 4)
+                    Clipped boxes in the input format.
+    valid         : torch.tensor of shape (N, ) or (N, M)
+                    Whether box is geometrically valid
     """
     if format == 'x1y1x2y2':
         boxes_clipped = boxes.clone()
@@ -86,7 +85,7 @@ def invert_box_transform(anchor_boxes, target_boxes):
     wt = target_boxes[:, 2]
     ht = target_boxes[:, 3]
 
-    transform = target_boxes.zeros_like()
+    transform = torch.zeros_like(target_boxes)
     transform[:, 0] = (xt - 1 + xa) / wa
     transform[:, 1] = (yt - 1 + ya) / ha
     transform[:, 2] = torch.log(wt / wa)
