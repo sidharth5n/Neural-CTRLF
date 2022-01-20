@@ -19,8 +19,10 @@ def parse_args():
                         help = '')
     parser.add_argument('--rpn_num_filters', type = int, default = 256,
                         help = '')
-    parser.add_argument('--anchor_scale', type = float, default = 1.0,
-                        help = '')
+    parser.add_argument('--anchor_widths', type = int, nargs = '+', default = [30, 90, 150, 210, 300],
+                        help = 'Widths to be used for building anchors')
+    parser.add_argument('--anchor_heights', type = int, nargs = '+', default = [20, 40, 600],
+                        help = 'Heights to be used for building anchors')
     parser.add_argument('--rnn_size', type = int, default = 512, 
                         help = 'Number of units to use at each layer of the RNN')
     parser.add_argument('-input_encoding_size', type = int, default = 512, 
@@ -41,6 +43,8 @@ def parse_args():
                         help = 'Height of pooled RoI')
     parser.add_argument('--output_width', type = int, default = 20,
                         help = 'Width of pooled RoI')
+    parser.add_argument('--drop_prob', type = float, default = 0.5, 
+                        help = 'Dropout strength throughout the model.')
 
     # Sampler hyper parameters
     parser.add_argument('--sampler_batch_size', type = int, default = 256, 
@@ -71,47 +75,27 @@ def parse_args():
                         help = 'margin for the cosine loss')
     
     # Data input settings
-    parser.add_argument('--dataset', type = str, default = '', 
+    parser.add_argument('--dataset', type = str, default = 'washington', 
                         help = 'HDF5 file containing the preprocessed dataset (from proprocess.py)')
-    parser.add_argument('--val_dataset', type = str, default = 'washington', 
-                        help = 'HDF5 file containing the preprocessed dataset (from proprocess.py)')
-    parser.add_argument('--fold', type = int, default = 1, 
+    parser.add_argument('--fold', type = int, default = -1, 
                         help = 'which fold to use')
-    parser.add_argument('--dataset_path', type = str, default = 'data/dbs/', 
+    parser.add_argument('--augment', type = str2bool, default = False,
+                        help = 'Whether to use augmented data')
+    parser.add_argument('--dataset_path', type = str, default = 'data', 
                         help = 'HDF5 file containing the preprocessed dataset (from proprocess.py)')
-    parser.add_argument('--debug_max_train_images', type = int, default = -1,
-                        help = 'Use this many training images (for debugging); -1 to use all images')
 
-    # Optimization
+    # Optimization and LR scheduling
     parser.add_argument('--learning_rate', type = float, default = 2e-3, 
                         help = 'learning rate to use')
-    parser.add_argument('--reduce_lr_every', type = int, default = 10000, 
-                        help = 'reduce learning rate every x iterations')
     parser.add_argument('--optim_beta1', type = float, default = 0.9, 
                         help = 'beta1 for adam')
     parser.add_argument('--optim_beta2', type = float, default = 0.999, 
                         help = 'beta2 for adam')
-    parser.add_argument('--optim_epsilon', type = float, default = 1e-8, 
-                        help = 'epsilon for smoothing')
-    parser.add_argument('--drop_prob', type = float, default = 0.5, 
-                        help = 'Dropout strength throughout the model.')
-    parser.add_argument('--max_iters', type = int, default = 25000, 
-                        help = 'Number of iterations to run; -1 to run forever')
-    parser.add_argument('--checkpoint_start_from', type = str, default = '', 
-                        help = 'Load model from a checkpoint instead of random initialization.')
-    parser.add_argument('--finetune_cnn_after', type = int, default = 1000, 
-                        help = 'Start finetuning CNN after this many iterations (-1 = never finetune)')
-    parser.add_argument('--val_images_use', type = int, default = -1, 
-                        help = 'Number of validation images to use for evaluation; -1 to use all')
-
-    # Model checkpointing
-    parser.add_argument('--save_checkpoint_every', type = int, default = 1000, 
-                        help = 'How often to save model checkpoints')
-    parser.add_argument('--checkpoint_path', type = str, default = 'checkpoints/',
-                        help = 'path to where checkpoints are saved')
-    parser.add_argument('--checkpoint_start_from', type = str, default = '',
-                        help = 'Name of the checkpoint file to use')
-        
+    parser.add_argument('--reduce_lr_every', type = int, default = 10000, 
+                        help = 'reduce learning rate every x iterations')
+    parser.add_argument('--lr_multiplicative_factor', type = float, default = 0.1,
+                        help = 'Multiplicative factor by which learning rate is to be reduced after very reduce_lr_every steps')
+          
     # Test-time model options (for evaluation)
     parser.add_argument('--rpn_nms_thresh', type = float, default = 0.7, 
                         help = 'Test-time NMS threshold to use in the RPN')
@@ -123,26 +107,39 @@ def parse_args():
                         help = 'Whether to clip final boxes to image boundary')
 
     # Visualization
-    parser.add_argument('--print_every', type = int, default = 200, 
-                        help = 'How often to print the latest images training loss.')
-    parser.add_argument('--progress_dump_every', type = int, default = 100, 
-                        help = 'After how many iterations do we write a progress report to vis/out ?. 0 = disable.')
-    parser.add_argument('--losses_log_every', type = int, default = 10, 
-                        help = 'How often do we save losses, for inclusion in the progress dump? (0 = disable)')
+    
 
-    # Misc
+    # Training related
     parser.add_argument('--id', type = str, default = 'presnet', 
                         help = 'an id identifying this run/job; useful for cross-validation')
     parser.add_argument('--seed', type = int, default = 123, 
                         help = 'random number generator seed to use')
-    parser.add_argument('--gpu', type = int, default = 0, 
-                        help = 'which gpu to use. -1 = use CPU')
-    # parser.add_argument('--timing', type = str2bool, default = false, 
-    #                   help = 'whether to time parts of the net')
+    parser.add_argument('--device', type = str, default = 'cpu', choices = ['cuda', 'cpu'],
+                        help = 'Which device to use. One of cuda or cpu')
+    parser.add_argument('--display_loss_every', type = int, default = 5, 
+                        help = 'How often to print the latest images training loss.')
+    parser.add_argument('--log_loss_every', type = int, default = 10, 
+                        help = 'How often do we save losses')
+    parser.add_argument('--perform_validation_every', type = int, default = 1000, 
+                        help = 'After how many iterations, do we evaluate on the validation split')
+    parser.add_argument('--resume_training', type = str, default = '', 
+                        help = 'Load model from a checkpoint instead of random initialization.')
+    parser.add_argument('--max_epochs', type = int, default = 100,
+                        help = 'Max no. of epochs of training')
+    parser.add_argument('--val_images_use', type = int, default = -1, 
+                        help = 'Number of validation images to use for evaluation; -1 to use all')
+    parser.add_argument('--finetune_cnn_after', type = int, default = 1000, 
+                        help = 'Start finetuning CNN after this many iterations (-1 = never finetune)')
+    # Model checkpointing
+    parser.add_argument('--save_checkpoint_every', type = int, default = 1000, 
+                        help = 'How often to save model checkpoints')
+    parser.add_argument('--checkpoint_path', type = str, default = 'checkpoints/',
+                        help = 'path to where checkpoints are saved')
     
 
     args = parser.parse_args()
 
     args.embedding_size = 108 if args.embedding == 'dct' else 540
+    args.fold = None if args.fold <= 0 else args.fold
 
     return args
