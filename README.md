@@ -5,6 +5,7 @@ Key differences from the [original implementation](https://github.com/tomfalaine
 1. The CNN backbone used is ResNet34 instead of Pre Activated ResNet34.
 2. Input images are in RGB format instead of gray scale.
 3. 128 filters in RPN head instead of 256.
+4. Did not use in-place regularizer in RPN.
 
 ## Dependencies
 
@@ -23,11 +24,11 @@ Prepare the dataset by running the following code. `augment` and `cross_val` can
 python preprocess.py --augment False --cross_val False --embedding dct
 ```
 ## Training
-First, download model checkpoint pre-trained on [IIIT-HWS dataset](https://cvit.iiit.ac.in/research/projects/cvit-projects/matchdocimgs) from [here]() and place it in `$root/checkpoints` directory. Now, run the following code with the same settings used for preparing the dataset.
+First, download model checkpoint pre-trained on [IIIT-HWS-10K dataset](https://cvit.iiit.ac.in/research/projects/cvit-projects/matchdocimgs) from [here]() and place it in `$root/checkpoints` directory. Now, run the following code with the same settings used for preparing the dataset.
 ```
 python train.py --id resnet34 --augment False --cross_val False --embedding dct
 ```
-The model checkpoints, loss dumps and infos will be saved at `checkpoints/$id/`. For a list of all the hyper parameters used for training, refer [opts.py]().
+The model checkpoints, loss dumps and infos will be saved at `checkpoints/$id/`. For a list of all the hyper parameters used for training, refer [opts.py](https://github.com/sidharth5n/Neural-CTRLF/blob/main/opts.py).
 
 ## Testing
 ```
