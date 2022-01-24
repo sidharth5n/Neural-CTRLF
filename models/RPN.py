@@ -9,9 +9,11 @@ class RPN(nn.Module):
         super(RPN, self).__init__()
         self.anchor_generator = AnchorGenerator(opt.anchor_widths, opt.anchor_heights)
         num_anchors = len(opt.anchor_widths) * len(opt.anchor_heights)
+        # Extracts RPN features from image feature map
         self.conv = nn.Conv2d(opt.input_dim, opt.input_dim, 3, 1, 1)
         # Bbox transformation from anchors boxes to target boxes - translation for (x,y) and log spacing for (w,h)
         self.bbox_pred = nn.Conv2d(opt.input_dim, num_anchors*4, 1, 1)
+        # Confidence score of a label being present
         self.cls_logits = nn.Conv2d(opt.input_dim, num_anchors, 1, 1)
         
     def forward(self, imgs, feats):
@@ -74,11 +76,20 @@ class AnchorGenerator(nn.Module):
         
     def generate_cells(self, widths, heights, dtype = torch.int64):
         """
-        For every (width, height) combination, output a zero-centered anchor with those values.
+        Generates a tensor with every combination from widths and heights
+
+        Parameters
+        ----------
+        widths       : list of length M
+                       Each element is an integer specifying the width of an anchor
+                       
+        heights      : list of length N
+                       Each element is an integer specifying the height of an anchor
 
         Returns
         ----------
-        base_anchors : torch.tensor of shape (M*N, 4)
+        base_anchors : torch.tensor of shape (M*N, 2)
+                       All combinations of height and width
         """
         combinations = list(itertools.product(widths, heights))
         base = torch.as_tensor(combinations, dtype = dtype)#.split(1, dim = 1)
@@ -130,7 +141,7 @@ class AnchorGenerator(nn.Module):
         Returns
         -------
         anchors     : torch.tensor of shape (B, K*H*W, 4)
-                      Anchors various positions of the image
+                      Anchors at various positions of the image in (xc,yc,w,h) format
         """
         assert image.shape[0] == 1 and feature_map.shape[0] == 1, "AnchorGenerator requires batch size of 1"
         grid_size = feature_map.shape[-2:]
