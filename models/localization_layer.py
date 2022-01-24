@@ -3,24 +3,10 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torchvision
 
-from models.box_sampler import BoxSampler
+from models.box_sampler import BalancedPositiveNegativeSampler
 from models.RPN import RPN
 from misc import box_utils
 
-"""
-[[
-
-
-Before each forward pass, you need to call the setImageSize method to set the size
-of the underlying image for that forward pass. During training, you also need to call
-the setGroundTruth method to set the ground-truth boxes and sequnces:
-- gt_boxes: 1 x B1 x 4 array of ground-truth region boxes
-- gt_embeddings: 1 x B1 x L array of ground-truth labels for regions
-After each forward pass, the instance variable stats will be populated with useful
-information; in particular stats.losses has all the losses.
-If you set the instance variable timing to true, then stats.times will contain
-times for all forward and backward passes.
---]]"""
 
 class LocalizationLayer(nn.Module):
     """
@@ -35,7 +21,7 @@ class LocalizationLayer(nn.Module):
         # Computes region proposals from conv features
         self.rpn = RPN(opt)
         # Performs positive / negative sampling of region proposals
-        self.box_sampler = BoxSampler(opt)
+        self.fg_bg_sampler = BalancedPositiveNegativeSampler(opt)
         # Whether to ignore out-of-bounds boxes for sampling at training time
         self.train_remove_outbounds_boxes = opt.train_remove_outbounds_boxes
         # Used to track image size; must call setImageSize before each forward pass
@@ -51,10 +37,12 @@ class LocalizationLayer(nn.Module):
         else:
             return self._test(*args, **kwargs)
 
-    def _test(self, cnn_features, img_height, img_width, **kwargs):
+    def _test(self, images, cnn_features, img_height, img_width, **kwargs):
         """
         Parameters
         ----------
+        images        : torch.tensor of shape (B, C', H', W')
+                        Input images
         cnn_features  : torch.tensor of shape (B, C, H, W)
                         Features extracted from CNN
         img_height    : int
@@ -70,7 +58,7 @@ class LocalizationLayer(nn.Module):
                         Bounding box of RoIs in (xc, yc, w, h) format
         """
         # Compute region proposals
-        rpn_boxes, _, _, rpn_scores = self.rpn(cnn_features) #(B,K*H*W,4),_,_,(B,K*H*W,1)
+        rpn_boxes, _, _, rpn_scores = self.rpn(images, cnn_features) #(B,K*H*W,4),_,_,(B,K*H*W,1)
         # Maybe clip boxes to image boundary
         if self.test_clip_boxes:
             bounds = {'xmin' : 0, 'ymin' : 0, 'xmax' : img_width - 1, 'ymax' : img_height - 1}
@@ -102,80 +90,70 @@ class LocalizationLayer(nn.Module):
 
         return rpn_boxes_nms
 
-    def _train(self, cnn_features, gt_boxes, gt_embeddings, gt_labels, img_height, img_width):
+    def _train(self, images, cnn_features, gt_boxes, gt_embeddings, gt_labels, img_height, img_width):
         """
         Parameters
         ----------
-        cnn_features      : torch.tensor of shape (B, C, H, W)
-                            Features extracted from CNN
-        img_height        : int
-                            Height of the image
-        img_width         : int
-                            Width of the image
-        gt_boxes          : torch.tensor of shape (B, P, 4)
-                            Ground truth bounding boxes in (xc, yc, w, h) format
-        gt_embeddings     : torch.tensor of shape (B, P, E)
-                            Ground truth embeddings of the labels in each box
-        gt_labels         : torch.tensor of shape (B, P)
-                            Ground truth labels of the boxes
+        images                : torch.tensor of shape (B, C', H', W')
+                                Input images
+        cnn_features          : torch.tensor of shape (B, C, H, W)
+                                Features extracted from CNN
+        img_height            : int
+                                Height of the image
+        img_width             : int
+                                Width of the image
+        gt_boxes              : torch.tensor of shape (B, P, 4)
+                                Ground truth bounding boxes in (xc, yc, w, h) format
+        gt_embeddings         : torch.tensor of shape (B, P, E)
+                                Ground truth embeddings of the labels in each box
+        gt_labels             : torch.tensor of shape (B, P)
+                                Ground truth labels of the boxes
 
         Returns
         -------
-        roi_features      : torch.tensor of shape (P'+N', C, HH, WW)
-                            RoI pooled features
-        roi_boxes         : torch.tensor of shape (P'+N', 4)
-                            Bounding box of RoIs in (xc, yc, w, h) format
-        pos_target_boxes  : torch.tensor of shape (P', 4)
-                            Bounding box of targets in (xc, yc, w, h) format
-        pos_target_labels : torch.tensor of shape (P', E)
-                            Embedding of each target
-        label_injection   : torch.tensor of shape (P', )
-                            Each element is {-1, 1}. If 1, mismatching pair has been injected in target
-        pos_scores        : torch.tensor of shape (P', 2)
-                            Box or not box score for each positive box
-        neg_scores        : torch.tensor of shape (N', 2)
-                            Box or not box score for each negative boxes
-        pos_trans         : torch.tensor of shape (P', 4)
-
-        pos_trans_targets : torch.tensor of shape (P', 4)
-                            Transformation from anchor box to target box
+        roi_features          : torch.tensor of shape (P'+N', C, HH, WW)
+                                RoI pooled features
+        roi_boxes             : torch.tensor of shape (P'+N', 4)
+                                Bounding box of RoIs in (xc, yc, w, h) format
+        pos_target_boxes      : torch.tensor of shape (P', 4)
+                                Bounding box of targets in (xc, yc, w, h) format
+        pos_target_embeddings : torch.tensor of shape (P', E)
+                                Embedding of each target
+        label_injection       : torch.tensor of shape (P', )
+                                Each element is {-1, 1}. If 1, mismatching pair has been injected in target
+        pos_scores            : torch.tensor of shape (P', 2)
+                                Box or not box score for each positive box
+        neg_scores            : torch.tensor of shape (N', 2)
+                                Box or not box score for each negative boxes
+        pos_trans             : torch.tensor of shape (P', 4)
+                                Box transformation - normalized translation offsets (x,y) and log-space 
+                                scaling factors (w,h)
+        pos_trans_targets     : torch.tensor of shape (P', 4)
+                                Target box transformation from anchor box to target box
         """
         B = cnn_features.shape[0]
         assert B == 1, 'Only minibatches with N = 1 are supported'
-
         # Compute region proposals
-        rpn_boxes, rpn_anchors, rpn_trans, rpn_scores = self.rpn(cnn_features) #(B,K*H*W,4),(B,K*H*W,4),(B,K*H*W,4),(B,K*H*W,1)
+        rpn_boxes, rpn_anchors, rpn_trans, rpn_scores = self.rpn(images, cnn_features) #(B,K*H*W,4),(B,K*H*W,4),(B,K*H*W,4),(B,K*H*W,1)
         # If boxes outside image bounds are to be removed
         if self.train_remove_outbounds_boxes:
             bounds = {'x_min' : 0, 'y_min' : 0, 'x_max' : img_width - 1, 'y_max' : img_height - 1}    
         else:
             bounds = None
         # Sample positive and negative boxes and inject mismatching positive target
-        pos_data, pos_target_data, neg_data, label_injection = self.box_sampler([rpn_boxes, rpn_anchors, rpn_trans, rpn_scores], [gt_boxes, gt_embeddings], gt_labels, bounds)
+        pos_data, pos_target_data, neg_data, label_injection = self.fg_bg_sampler([rpn_boxes, rpn_anchors, rpn_trans, rpn_scores], [gt_boxes, gt_embeddings], gt_labels, bounds)
         # Unpack positive data
         pos_boxes, pos_anchors, pos_trans, pos_scores = pos_data #(P',4),(P',4),(P',4),(P',1)
         # Unpack target data
-        pos_target_boxes, pos_target_labels = pos_target_data #(P',4),(P',E)
+        pos_target_boxes, pos_target_embeddings = pos_target_data #(P',4),(P',E)
         # Unpack negative data (only scores matter)
         neg_boxes, _, _, neg_scores = neg_data #(N',4),(N',4),(N',4),(N',1)
         # Concatentate pos_boxes and neg_boxes into roi_boxes
         roi_boxes = torch.cat([pos_boxes, neg_boxes], dim = 0) #(P'+N',4)
-        # Compute targets for RPN bounding box regression
-        ####################################################################
-        # SHOULD ALL THE BELOW STATEMENTS BE IN with.torch.no_grad() ???
-        #####################################################################
+        # Compute transformation targets for RPN bounding box regression
         pos_trans_targets = box_utils.invert_box_transform(pos_anchors, pos_target_boxes)
-        # # -- DIRTY DIRTY HACK: To prevent the loss from blowing up, replace boxes
-        # # -- with huge pos_trans_targets with ground-truth
-        # max_trans = torch.abs(pos_trans_targets).max(1)[0]
-        # max_trans_mask = torch.gt(max_trans, 10).expand(pos_trans_targets.shape)
-        # mask_sum = max_trans_mask.sum() / 4
-        # if mask_sum > 0:
-        #     print(f'WARNING: Masking out {mask_sum} boxes in LocalizationLayer')
-        #     pos_trans[max_trans_mask] = 0
-        #     pos_trans_targets[max_trans_mask] = 0
 
-        return roi_boxes, pos_target_boxes, pos_target_labels, label_injection, pos_scores, neg_scores, pos_trans, pos_trans_targets
+        return roi_boxes, pos_target_boxes, pos_target_embeddings, label_injection, pos_scores, neg_scores, pos_trans, pos_trans_targets
 
 
 
