@@ -71,7 +71,7 @@ def clip_boxes(boxes, bounds, format):
     
     return boxes_clipped, valid
 
-def invert_box_transform(anchor_boxes, target_boxes, eps = 1e-8):
+def find_box_transform(anchor_boxes, target_boxes, eps = 1e-8):
     """
     Computes the transformation parameters that gives target boxes
     given anchor boxes.

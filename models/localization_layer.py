@@ -148,7 +148,7 @@ class LocalizationLayer(nn.Module):
         # Concatentate pos_boxes and neg_boxes into roi_boxes
         roi_boxes = torch.cat([pos_boxes, neg_boxes], dim = 0) #(P'+N',4)
         # Compute transformation targets for RPN bounding box regression
-        pos_trans_targets = box_utils.invert_box_transform(pos_anchors, pos_target_boxes)
+        pos_trans_targets = box_utils.find_box_transform(pos_anchors, pos_target_boxes)
 
         return roi_boxes, pos_target_boxes, pos_target_embeddings, label_injection, pos_scores, neg_scores, pos_trans, pos_trans_targets
     
