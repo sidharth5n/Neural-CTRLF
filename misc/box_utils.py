@@ -71,26 +71,32 @@ def clip_boxes(boxes, bounds, format):
     
     return boxes_clipped, valid
 
-def invert_box_transform(anchor_boxes, target_boxes):
+def invert_box_transform(anchor_boxes, target_boxes, eps = 1e-8):
     """
-    # -- Used to compute box regression targets from GT boxes
+    Computes the transformation parameters that gives target boxes
+    given anchor boxes.
+
+    Parameters
+    ----------
+    anchor_boxes : torch.tensor of shape (N, 4)
+                   Anchor boxes in (xc, yc, w, h) format
+    target_boxes : torch.tensor of shape (N, 4)
+                   Target boxes in (xc, yc, w, h) format
+
+    Returns
+    -------
+    transform    : torch.tensor of shape (N, 4)
+                   Translation for (x,y) and log spacing for (w,h) parameters
     """
-    xa = anchor_boxes[:, 0]
-    ya = anchor_boxes[:, 1]
-    wa = anchor_boxes[:, 2]
-    ha = anchor_boxes[:, 3]
-
-    xt = target_boxes[:, 0]
-    yt = target_boxes[:, 1]
-    wt = target_boxes[:, 2]
-    ht = target_boxes[:, 3]
-
-    transform = torch.zeros_like(target_boxes)
-    transform[:, 0] = (xt - 1 + xa) / wa
-    transform[:, 1] = (yt - 1 + ya) / ha
-    transform[:, 2] = torch.log(wt / wa)
-    transform[:, 3] = torch.log(ht / wa)
-
+    xa, ya, wa, ha = torch.split(anchor_boxes, 1, dim = -1)
+    wa = torch.maximum(wa, torch.full_like(wa, eps))
+    ha = torch.maximum(ha, torch.full_like(ha, eps))
+    xt, yt, wt, ht = torch.split(target_boxes, 1, dim = -1)
+    tx = (xt - xa) / wa
+    ty = (yt - ya) / ha
+    tw = torch.log(wt / wa)
+    th = torch.log(ht / ha)
+    transform = torch.cat([tx, ty, tw, th], dim = -1)
     return transform
 
 def box_to_affine(box, H, W):
