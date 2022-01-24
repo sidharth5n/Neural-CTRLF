@@ -10,11 +10,8 @@ from misc import box_utils
 
 class LocalizationLayer(nn.Module):
     """
-    A LocalizationLayer wraps up all of the complexities of detection regions and
-    using a spatial transformer to attend to their features. Used on its own, it can
-    be used for learnable region proposals; it can also be plugged into larger modules
-    to do region proposal + classification (detection) or region proposal + captioning
-    (dense captioning).
+    Wraps up all the complexities of detecting regions. Comprises of region
+    proposal network and box sampler.
     """
     def __init__(self, opt):
         super(LocalizationLayer, self).__init__()
@@ -24,11 +21,11 @@ class LocalizationLayer(nn.Module):
         self.fg_bg_sampler = BalancedPositiveNegativeSampler(opt)
         # Whether to ignore out-of-bounds boxes for sampling at training time
         self.train_remove_outbounds_boxes = opt.train_remove_outbounds_boxes
-        # Used to track image size; must call setImageSize before each forward pass
-        self.image_width = None
-        self.image_height = None
+        # Whether to clip out of image boxes
         self.test_clip_boxes = opt.clip_final_boxes
+        # Threshold for NMS
         self.test_nms_thresh = opt.rpn_nms_thresh
+        # Max no. of proposals after NMS
         self.test_max_proposals = opt.num_proposals
 
     def forward(self, *args, **kwargs):
