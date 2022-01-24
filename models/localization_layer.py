@@ -151,45 +151,4 @@ class LocalizationLayer(nn.Module):
         pos_trans_targets = box_utils.invert_box_transform(pos_anchors, pos_target_boxes)
 
         return roi_boxes, pos_target_boxes, pos_target_embeddings, label_injection, pos_scores, neg_scores, pos_trans, pos_trans_targets
-
-
-
-######################################################################
-# CHECK WHETHER THIS CAN BE REPLACED WITH AnchorGenerator FROM PYTORCH
-# https://github.com/pytorch/vision/blob/main/torchvision/models/detection/anchor_utils.py
-######################################################################
-# class MakeAnchors(nn.Module):
-#     def __init__(self, x0, y0, sx, sy, anchors):
-#         super().__init__()
-#         self.x0 = x0
-#         self.y0 = y0
-#         self.sx = sx
-#         self.sy = sy
-#         self.anchors = anchors
-    
-#     def forward(self, x):
-#         """
-#         x : torch.tensor of shape (N, K*D, H, W)
-
-#         Returns
-#         -------
-#         anchors : torch.tensor of shape (N, 4*K, H, W)
-#         """
-#         n, _, h, w = x.shape
-#         k = self.anchors.shape[1]
-        
-#         x_c = torch.arange(w, dtype = x.dtype, device = x.device)
-#         x_c = x_c * self.sx + self.x0
-        
-#         y_c = torch.arange(h, dtype = x.dtype, device = x.device)
-#         y_c = y_c * self.sy + self.y0
-
-#         x_c = x_c.view(1, 1, 1, w).expand(n, k, h, w)
-#         y_c = y_c.view(1, 1, h, 1).expand(n, k, h, w)
-#         W = self.anchors[0].view(1, k, 1, 1).expand(n, k, h, w)
-#         H = self.anchors[1].view(1, k, 1, 1).expand(n, k, h, w)
-        
-#         anchors = torch.cat([x_c, y_c, W, H], dim = 1)
-        
-#         return anchors
     
