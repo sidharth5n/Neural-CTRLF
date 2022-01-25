@@ -68,11 +68,13 @@ class LocalizationLayer(nn.Module):
         
         # Convert rpn boxes from (xc, yc, w, h) format to (x1, y1, x2, y2)
         rpn_boxes_x1y1x2y2 = torchvision.ops.box_convert(rpn_boxes, 'cxcywh', 'xyxy')
-        verbose = True
+        verbose = False
         if verbose:
             print(f'Applying NMS on {rpn_boxes.shape[0]} RPN boxes with {self.test_nms_thresh} threshold.')
         # Perform NMS on the RPN boxes
-        idx = torchvision.ops.nms(rpn_boxes_x1y1x2y2, torch.sigmoid(rpn_scores.squeeze(1)), self.test_nms_thresh)
+        idx = torchvision.ops.nms(boxes = rpn_boxes_x1y1x2y2.cpu(), 
+                                  scores = torch.sigmoid(rpn_scores.squeeze(1)).cpu(), 
+                                  iou_threshold = self.test_nms_thresh).to(rpn_scores.device)
         # Clip no. of proposals from NMS
         if kwargs.get('num_proposals', self.test_max_proposals) > 0:
             idx = idx[:kwargs.get('num_proposals', self.test_max_proposals)]
