@@ -1,18 +1,18 @@
-from msilib.schema import Error
 import os
 import time
 import torch
 import torch.nn as nn
 
 from opts import parse_args
-from losses import BoxRegressionCriterion
+# from losses import BoxRegressionCriterion
 from misc import utils
 from models.WordSpottingModel import WordSpottingModel
 from dataloader import DataLoader
 from misc import utils
 
 def train(opt):
-    checkpoint_path = os.path.join(opt.checkpoint_path, opt.id, f'fold_{opt.fold}' if opt.fold else 'no_fold')
+    checkpoint_path = os.path.join(opt.checkpoint_path, 
+                                   opt.id + ('_augmented' if opt.augment else '') + f'_fold_{opt.fold}' if opt.fold else '')
     if not os.path.isdir(checkpoint_path):
         os.makedirs(checkpoint_path)
 
@@ -22,12 +22,14 @@ def train(opt):
         infos = utils.load_checkpoint(os.path.join(checkpoint_path, 'infos.pkl'))
         histories = utils.load_checkpoint(os.path.join(checkpoint_path, 'histories.pkl'))
 
-    train_loader = DataLoader(opt, 'train', infos.get('loader', None))
-    val_loader = DataLoader(opt, 'val')
+    device = torch.device('cuda' if opt.device == 'cuda' and torch.cuda.is_available() else 'cpu')
+    pin_memory = opt.device == 'cuda' and torch.cuda.is_available()
+    print(f"Running on {device} {'with' if pin_memory else 'without'} memory pinning in dataloader.")
+
+    train_loader = DataLoader(opt, 'train', pin_memory = pin_memory, params = infos.get('loader', None))
+    val_loader = DataLoader(opt, 'val', pin_memory = pin_memory)
 
     opt.vocab_size = train_loader.get_vocab_size()
-
-    device = torch.device('cuda' if opt.device == 'cuda' and torch.cuda.is_available() else 'cpu')
     
     # Set up model
     model = WordSpottingModel(opt).to(device)
@@ -35,7 +37,7 @@ def train(opt):
     
     # Set up loss functions
     objectness_loss_fn = nn.BCEWithLogitsLoss()
-    box_reg_loss_fn = BoxRegressionCriterion()
+    box_reg_loss_fn = nn.SmoothL1Loss()
     embedding_loss_fn = nn.CosineEmbeddingLoss(margin = opt.cosine_margin)
     rpn_objectness_loss_fn = nn.BCEWithLogitsLoss()
     rpn_box_reg_loss_fn = nn.SmoothL1Loss()  # for RPN box regression
@@ -47,9 +49,8 @@ def train(opt):
     
     # Setup learning rate scheduler
     scheduler = torch.optim.lr_scheduler.StepLR(optimizer, 
-                                                step = opt.reduce_lr_every, 
-                                                gamma = opt.lr_multiplicative_factor, 
-                                                verbose = True)
+                                                step_size = opt.reduce_lr_every, 
+                                                gamma = opt.lr_multiplicative_factor)
     
     # Load checkpoint if available
     if opt.resume_training:
@@ -64,25 +65,23 @@ def train(opt):
 
     for epoch in range(start_epoch, opt.max_epochs):
         for data in train_loader:
-            img, boxes, embeddings, labels, region_proposals, _ = [x.to(device) for x in data]
-            objectness_scores, pos_roi_boxes, final_box_trans, emb_output, label_injection, pos_scores, neg_scores, pos_trans, pos_trans_targets, gt_boxes, gt_embeddings = model(img, boxes, embeddings, labels)
+            img, boxes, embeddings, labels = [x.to(device) for x in data]
+            objectness_scores, final_box_trans, emb_output, rpn_pos_scores, rpn_neg_scores, rpn_pos_trans, gt_box_trans, gt_embeddings, gt_rpn_pos_trans, label_injection = model(img, boxes, embeddings, labels)
             # Set labels for objectness confidence
-            with torch.no_grad():
-                objectness_labels = torch.zeros_like(objectness_scores)
-                objectness_labels[:pos_roi_boxes.shape[0]] = 1
+            objectness_labels = torch.zeros_like(objectness_scores)
+            objectness_labels[:gt_box_trans.shape[0]] = 1
             # Compute objectness loss
             objectness_loss = objectness_loss_fn(objectness_scores, objectness_labels)
             # Compute bbox regression loss
-            box_reg_loss = box_reg_loss_fn(pos_roi_boxes, final_box_trans, gt_boxes)
+            box_reg_loss = box_reg_loss_fn(final_box_trans, gt_box_trans)
             # Compute embedding loss
             emb_loss = embedding_loss_fn(emb_output, gt_embeddings, label_injection)
-            # Set labels for positive and negative boxes of RPN
-            with torch.no_grad():
-                obj_crit_label = torch.cat([torch.ones_like(pos_scores), torch.zeros_like(neg_scores)], dim = 0)
-            # Compute loss for positive and negative boxes of RPN
-            rpn_objectness_loss = rpn_objectness_loss_fn(torch.cat([pos_scores, neg_scores], dim = 0), obj_crit_label)
+            # Set labels for objectness confidence of RPN
+            rpn_objectness_labels = torch.cat([torch.ones_like(rpn_pos_scores), torch.zeros_like(rpn_neg_scores)], dim = 0)
+            # Compute objectness loss of RPN
+            rpn_objectness_loss = rpn_objectness_loss_fn(torch.cat([rpn_pos_scores, rpn_neg_scores], dim = 0), rpn_objectness_labels)
             # Compute bbox regression loss of RPN
-            rpn_reg_loss = rpn_box_reg_loss_fn(pos_trans, pos_trans_targets)
+            rpn_reg_loss = rpn_box_reg_loss_fn(rpn_pos_trans, gt_rpn_pos_trans)
             # Compute total loss
             total_loss = opt.end_objectness_weight * objectness_loss + opt.mid_box_reg_weight * rpn_reg_loss + \
                          opt.mid_objectness_weight * rpn_objectness_loss + opt.end_box_reg_weight * box_reg_loss + \
