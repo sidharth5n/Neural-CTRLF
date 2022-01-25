@@ -4,14 +4,11 @@ This is the testing script
 
 import os
 import argparse
-import copy
 import torch
-import torch.nn.functional as F
-import torchvision
 
 from models.WordSpottingModel import WordSpottingModel
 from dataloader import DataLoader
-from misc import box_utils, utils
+from misc import utils
 
 def parse_args():
     parser = argparse.ArgumentParser()
