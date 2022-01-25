@@ -9,6 +9,7 @@ import torch
 from models.WordSpottingModel import WordSpottingModel
 from dataloader import DataLoader
 from misc import utils
+from opts import str2bool
 
 def parse_args():
     parser = argparse.ArgumentParser()
@@ -26,8 +27,10 @@ def parse_args():
                         help = 'Whether to use cuda or cpu')
     parser.add_argument('--split', type = str, default = 'test', choices = ['test', 'val'], 
                         help = 'Which split to evaluate; either val or test.')
-    parser.add_argument('--fold', type = int, default = -1, 
-                        help = 'How many folds to use. Default is no folds.')
+    parser.add_argument('--augment', type = str2bool, default = False,  
+                        help = "Whether to use augmented data")
+    parser.add_argument('--fold', type = str2bool, default = False, 
+                        help = 'Whether to use 4-fold cross validation')
     parser.add_argument('--rpn_nms_thresh', type = float, default = 0.7,
                         help = '')
     parser.add_argument('--final_nms_thresh', type = float, default = -1, 
@@ -39,9 +42,6 @@ def parse_args():
 
     args = parser.parse_args()
 
-    if args.fold <= 0:
-        args.fold = None
-
     return args
 
 def test(opt):
@@ -51,7 +51,8 @@ def test(opt):
     if not os.path.isdir(opt.out_dir):
         os.makedirs(opt.out_dir)
     
-    checkpoint_path = os.path.join(opt.checkpoint_path, opt.id, f'fold_{opt.fold}' if opt.fold else 'no_fold')
+    checkpoint_path = os.path.join(opt.checkpoint_path, 
+                                   opt.id + ('_augmented' if opt.augment else '') + f'_fold_{opt.fold}' if opt.fold else '')
     infos = utils.load(os.path.join(checkpoint_path, 'infos.pkl'))
 
     for k in vars(infos['opt']).keys():
@@ -117,7 +118,7 @@ def test(opt):
 if __name__ == '__main__':
     args = parse_args()
     if args.fold:
-        for fold in range(args.fold):
+        for fold in range(4):
             args.fold = fold
             test(args)
     else:
